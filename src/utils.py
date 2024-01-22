@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor, nn
-
+import cv2
 from hps import Hparams
 
 
@@ -416,4 +416,5 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
         .transpose([0, 2, 1, 3, 4])
         .reshape([n_rows * h, bs * w, c])
     )
-    imageio.imwrite(os.path.join(args.save_dir, f"viz-{args.iter}.png"), im)
+    # print(im.shape,"im shape",n_rows,h,bs,w,c)
+    cv2.imwrite(os.path.join(args.save_dir, f"viz-{args.iter}.png"), im)
