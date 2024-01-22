@@ -1,7 +1,7 @@
-## Causal Generative Modelling: Image Counterfactuals
+## Causal Generative Modelling: Image Counterfactuals for Retinal Vector Embeddings Team
 [:hugs:Huggingface demo here!:hugs:](https://huggingface.co/spaces/mira-causality/counterfactuals)
 
-Code for the **ICML 2023** paper:
+Adapted from the Codebase for the **ICML 2023** paper:
 
 >[**High Fidelity Image Counterfactuals with Probabilistic Causal Models**](https://arxiv.org/abs/2306.15764)\
 >Fabio De Sousa Ribeiro<sup>1</sup>, Tian Xia<sup>1</sup>, Miguel Monteiro<sup>1</sup>, Nick Pawlowski<sup>2</sup>, Ben Glocker<sup>1</sup>\
