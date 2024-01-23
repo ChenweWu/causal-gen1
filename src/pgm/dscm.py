@@ -7,7 +7,11 @@ import torch
 from layers import TraceStorage_ELBO
 from torch import Tensor, nn
 from utils_pgm import check_nan
-
+import os
+import inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir) 
 from datasets import get_attr_max_min
 from hps import Hparams
 
@@ -119,8 +123,8 @@ def ukbb_preprocess(pa: Dict[str, Tensor]) -> Dict[str, Tensor]:
 
 
 def vae_preprocess(args: Hparams, pa: Dict[str, Tensor]) -> Tensor:
-    if "ukbb" in args.dataset:
-        pa = ukbb_preprocess(pa)
+    # if "ukbb" in args.dataset:
+    #     pa = ukbb_preprocess(pa)
     # concatenate parents, expand to input res for conditioning the vae
     concat_pa = torch.cat(
         [pa[k] if len(pa[k].shape) > 1 else pa[k][..., None] for k in args.parents_x],

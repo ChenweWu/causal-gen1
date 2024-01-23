@@ -250,6 +250,8 @@ def eval_epoch(
 
 
 def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
+
+
     if "ukbb" in args.dataset:
         datasets = ukbb(args)
     elif args.dataset == "morphomnist":
@@ -279,6 +281,7 @@ def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
         "worker_init_fn": seed_worker,
     }
     dataloaders = {}
+    
     if args.setup == "sup_pgm":
         dataloaders["train"] = DataLoader(
             datasets["train"], shuffle=True, drop_last=True, **kwargs
@@ -308,7 +311,70 @@ def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
     dataloaders["valid"] = DataLoader(datasets["valid"], shuffle=False, **kwargs)
     dataloaders["test"] = DataLoader(datasets["test"], shuffle=False, **kwargs)
     return dataloaders
+def setup_dataloaders_cf(args: Hparams) -> Dict[str, DataLoader]:
 
+    args.dataset = 'mimic'
+    args.setup = 'semi_sup'
+    if "ukbb" in args.dataset:
+        datasets = ukbb(args)
+    elif args.dataset == "morphomnist":
+        assert args.input_channels == 1
+        assert args.input_res == 32
+        assert args.pad == 4
+        args.parents_x = ["thickness", "intensity", "digit"]
+        args.context_norm = "[-1,1]"
+        args.concat_pa = False
+        datasets = morphomnist(args)
+    elif args.dataset == "cmnist":
+        assert args.input_channels == 3
+        assert args.input_res == 32
+        assert args.pad == 4
+        args.parents_x = ["digit", "colour"]
+        args.concat_pa = False
+        datasets = cmnist(args)
+    elif args.dataset == "mimic":
+        datasets = mimic(args)
+    else:
+        NotImplementedError
+
+    kwargs = {
+        "batch_size": args.bs,
+        "num_workers": 4,
+        "pin_memory": True,
+        "worker_init_fn": seed_worker,
+    }
+    dataloaders = {}
+    
+    if args.setup == "sup_pgm":
+        dataloaders["train"] = DataLoader(
+            datasets["train"], shuffle=True, drop_last=True, **kwargs
+        )
+    else:
+        args.n_total = len(datasets["train"])
+        args.sup_frac = 0.9
+        args.n_labelled = int(args.sup_frac * args.n_total)
+        args.n_unlabelled = args.n_total - args.n_labelled
+        idx = np.arange(args.n_total)
+        rng = np.random.RandomState(1)
+        rng.shuffle(idx)
+        train_l = torch.utils.data.Subset(datasets["train"], idx[: args.n_labelled])
+
+        if args.setup == "semi_sup":
+            train_u = torch.utils.data.Subset(datasets["train"], idx[args.n_labelled :])
+            dataloaders["train_l"] = DataLoader(  # labelled
+                train_l, shuffle=True, drop_last=True, **kwargs
+            )
+            dataloaders["train_u"] = DataLoader(  # unlabelled
+                train_u, shuffle=True, drop_last=True, **kwargs
+            )
+        elif args.setup == "sup_aux":
+            dataloaders["train"] = DataLoader(  # labelled
+                train_l, shuffle=True, drop_last=True, **kwargs
+            )
+
+    dataloaders["valid"] = DataLoader(datasets["valid"], shuffle=False, **kwargs)
+    dataloaders["test"] = DataLoader(datasets["test"], shuffle=False, **kwargs)
+    return dataloaders
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

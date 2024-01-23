@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import torch
 from dscm import DSCM
-from flow_pgm import FlowPGM
+from flow_pgm import FlowPGM, ChestPGM
 from layers import TraceStorage_ELBO
 from sklearn.metrics import roc_auc_score
 from torch import Tensor, nn
@@ -17,6 +17,7 @@ from tqdm import tqdm
 from train_pgm import eval_epoch, preprocess, sup_epoch
 from utils_pgm import plot_cf, update_stats
 
+from train_pgm import setup_dataloaders, setup_dataloaders_cf
 sys.path.append("..")
 from datasets import get_attr_max_min
 from hps import Hparams
@@ -126,6 +127,7 @@ def cf_epoch(
     steps_skipped = 0
 
     dag_vars = list(model.pgm.variables.keys())
+    print(dag_vars)
     if is_train and isinstance(optimizers, tuple):
         optimizer, lagrange_opt = optimizers
     else:
@@ -140,12 +142,13 @@ def cf_epoch(
     for i, batch in loader:
         bs = batch["x"].shape[0]
         batch = preprocess(batch)
-
+        print("batch",batch)
         with torch.no_grad():
             # randomly intervene on a single parent do(pa_k ~ p(pa_k))
             do = {}
-            do_k = copy.deepcopy(args.do_pa) if args.do_pa else random.choice(dag_vars)
+            do_k =  random.choice(dag_vars)
             if is_train:
+                print(do_k)
                 do[do_k] = batch[do_k].clone()[torch.randperm(bs)]
             else:
                 idx = torch.randperm(train_set[do_k].shape[0])
@@ -304,7 +307,7 @@ if __name__ == "__main__":
     predictor_checkpoint = torch.load(args.predictor_path)
     predictor_args = Hparams()
     predictor_args.update(predictor_checkpoint["hparams"])
-    predictor = FlowPGM(predictor_args).cuda()
+    predictor = ChestPGM(predictor_args).cuda()
     predictor.load_state_dict(predictor_checkpoint["ema_model_state_dict"])
 
     # for backwards compatibility
@@ -313,7 +316,6 @@ if __name__ == "__main__":
     if hasattr(predictor_args, "loss_norm"):
         args.loss_norm
 
-    from train_pgm import setup_dataloaders
 
     if args.data_dir != "":
         predictor_args.data_dir = args.data_dir
@@ -337,7 +339,7 @@ if __name__ == "__main__":
     pgm_checkpoint = torch.load(args.pgm_path)
     pgm_args = Hparams()
     pgm_args.update(pgm_checkpoint["hparams"])
-    pgm = FlowPGM(pgm_args).cuda()
+    pgm = ChestPGM(pgm_args).cuda()
     pgm.load_state_dict(pgm_checkpoint["ema_model_state_dict"])
 
     # for backwards compatibility
@@ -356,17 +358,20 @@ if __name__ == "__main__":
     print(f"\nLoading VAE checkpoint: {args.vae_path}")
     vae_checkpoint = torch.load(args.vae_path)
     vae_args = Hparams()
+    # vae_args.update({'dataset':args.dataset})
     vae_args.update(vae_checkpoint["hparams"])
+    print(vae_checkpoint['hparams'])
     if not hasattr(vae_args, "cond_prior"):  # for backwards compatibility
         vae_args.cond_prior = False
-    vae_args.kl_free_bits = vae_args.free_bits
+    # vae_args.kl_free_bits = vae_args.free_bits
     vae = HVAE(vae_args).cuda()
     vae.load_state_dict(vae_checkpoint["ema_model_state_dict"])
 
     # vae_args.data_dir = None  # adjust data_dir as needed
     if args.data_dir != "":
         vae_args.data_dir = args.data_dir
-    dataloaders = setup_dataloaders(vae_args)
+    # vae_args['dataset'] = args.dataset
+    dataloaders = setup_dataloaders_cf(vae_args)
 
     @torch.no_grad()
     def vae_epoch(args, vae, dataloader):
@@ -412,7 +417,7 @@ if __name__ == "__main__":
 
     # init model
     if not hasattr(vae_args, "dataset"):
-        args.dataset = "ukbb"
+        args.dataset = "mimic"
     model = DSCM(args, pgm, predictor, vae)
     ema = EMA(model, beta=args.ema_rate)
     model.cuda()
