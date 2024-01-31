@@ -2,17 +2,18 @@
 exp_name="$1"
 run_cmd="python main.py \
     --exp_name=$exp_name \
-    --data_dir=../datasets/morphomnist \
-    --hps morphomnist \
-    --parents_x thickness intensity digit \
-    --context_dim=12 \
+    --data_dir=/home/opc/Retina/BRSET/ \
+    --hps brset \
+    --parents_x patient_age patient_sex DR_ICDR \
+    --context_dim=7 \
     --concat_pa \
     --lr=0.001 \
-    --bs=32 \
+    --bs=16 \
     --wd=0.01 \
     --beta=1 \
     --cond_prior \
-    --eval_freq=4"
+    --eval_freq=4\
+    --n_classes=5"
 
 # run_cmd="python main.py \
 #     --exp_name=$exp_name \

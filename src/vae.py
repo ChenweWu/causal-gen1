@@ -172,6 +172,12 @@ class DecoderBlock(nn.Module):
     def forward_prior(
         self, z: Tensor, pa: Optional[Tensor] = None, t: Optional[float] = None
     ) -> Tuple[Tensor, Tensor, Tensor]:
+        #print('Prior')
+        #print('z')
+        #print(z.shape)
+        #print('pa')
+        #print(pa.shape)
+        
         if self.cond_prior:
             z = torch.cat([z, pa], dim=1)
         z = self.prior(z)
@@ -185,7 +191,15 @@ class DecoderBlock(nn.Module):
     def forward_posterior(
         self, z: Tensor, x: Tensor, pa: Tensor, t: Optional[float] = None
     ) -> Tuple[Tensor, Tensor]:
+        #print('Posterior')
+        #print('z')
+        #print(z.shape)
+        #print('x')
+        #print(x.shape)
+        #print('pa')
+        #print(pa.shape)
         h = torch.cat([z, pa, x], dim=1)
+        #print('h shape: ', h.shape)
         q_loc, q_logscale = self.posterior(h).chunk(2, dim=1)
         if t is not None:
             q_logscale = q_logscale + torch.tensor(t).to(z.device).log()
@@ -437,8 +451,27 @@ class HVAE(nn.Module):
         self.register_buffer("log2", torch.tensor(2.0).log())
 
     def forward(self, x: Tensor, parents: Tensor, beta: int = 1) -> Dict[str, Tensor]:
+        #print(f'Encoder Input:')
+        #print(type(x))
+        #print(x.shape)
         acts = self.encoder(x)
+        print(type(acts))
+        for key, i in acts.items():
+            print(f'Encoder output key: {key}')
+            print(type(i))
+            print(i.shape)
+            
+        #print('Parents')
+        #print(parents.shape)
         h, stats = self.decoder(parents=parents, x=acts)
+        print('Decoder output shape: ', h.shape)
+        print('Stats: ')
+        for stat in stats:
+            for key, i in stat.items():
+                print(f'Key: {key}')
+                print(type(i))
+                print(i.shape)
+        
         nll_pp = self.likelihood.nll(h, x)
         if self.free_bits > 0:
             free_bits = torch.tensor(self.free_bits).type_as(nll_pp)
