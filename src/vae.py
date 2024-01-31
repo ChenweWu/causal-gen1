@@ -455,22 +455,22 @@ class HVAE(nn.Module):
         #print(type(x))
         #print(x.shape)
         acts = self.encoder(x)
-        print(type(acts))
-        for key, i in acts.items():
-            print(f'Encoder output key: {key}')
-            print(type(i))
-            print(i.shape)
+        #print(type(acts))
+        #for key, i in acts.items():
+            #print(f'Encoder output key: {key}')
+            #print(type(i))
+            #print(i.shape)
             
         #print('Parents')
         #print(parents.shape)
         h, stats = self.decoder(parents=parents, x=acts)
-        print('Decoder output shape: ', h.shape)
-        print('Stats: ')
-        for stat in stats:
-            for key, i in stat.items():
-                print(f'Key: {key}')
-                print(type(i))
-                print(i.shape)
+        #print('Decoder output shape: ', h.shape)
+        #print('Stats: ')
+        #for stat in stats:
+            #for key, i in stat.items():
+                #print(f'Key: {key}')
+                #print(type(i))
+                #print(i.shape)
         
         nll_pp = self.likelihood.nll(h, x)
         if self.free_bits > 0:

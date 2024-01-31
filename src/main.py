@@ -48,7 +48,7 @@ def main(args: Hparams):
     else:
         NotImplementedError
         
-    print(model)
+    #print(model)
     if torch.cuda.device_count() > 1:
         pass
         #model = torch.nn.DataParallel(model)
