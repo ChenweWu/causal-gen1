@@ -10,7 +10,7 @@ class Hparams:
             
 brset = Hparams()
 brset.lr = 1e-3
-brset.bs = 1
+brset.bs = 16
 brset.wd = 0.01
 brset.z_dim = 16
 brset.input_res = 384 #192
