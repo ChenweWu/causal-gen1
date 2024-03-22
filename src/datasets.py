@@ -415,16 +415,16 @@ def read_mimic_from_df(
     """
     img_path = os.path.join(data_dir, df.iloc[idx]["path_preproc"])
     img = Image.open(img_path)  # .convert("RGB")
-    if df.iloc[idx]["disease"] == "Pleural Effusion":
-        label = torch.tensor(1)
-    elif df.iloc[idx]["disease"] == "No Finding":
-        label = torch.tensor(0)
-    else:
-        raise ValueError(
-            f"Invalid label {df.iloc[idx]['disease']}.",
-            "We expect either 'pleural_effusion' or 'no_finding'.",
-        )
-
+    # if df.iloc[idx]["disease"] == "Pleural Effusion":
+    #     label = torch.tensor(1)
+    # elif df.iloc[idx]["disease"] == "No Finding":
+    #     label = torch.tensor(0)
+    # else:
+    #     raise ValueError(
+    #         f"Invalid label {df.iloc[idx]['disease']}.",
+    #         "We expect either 'pneumonia' or 'no_finding' or 'lung lesion'.",
+    #     )
+    label = df.iloc[idx]['disease_label']
     age = df.iloc[idx]["age"]
     sex = df.iloc[idx]["sex_label"]
     race = df.iloc[idx]["race_label"]
@@ -450,7 +450,7 @@ class MIMIC(Dataset):
         # remove rows whose disease label is neither No Finding nor Pleural Effusion
         self.split_df = split_df[
             (split_df["disease"] == "No Finding")
-            | (split_df["disease"] == "Pleural Effusion")
+            | (split_df["disease"] == "Lung Lesion") | (split_df["disease"] == "Pneumonia")
         ].reset_index(drop=True)
 
         self.data_dir = data_dir
@@ -469,6 +469,20 @@ class MIMIC(Dataset):
                 self.imgs.append(img)
                 self.labels.append(label)
                 self.meta.append(meta)
+        # if self.columns is None:
+            # ['eid', 'sex', 'age', 'brain_volume', 'ventricle_volume', 'mri_seq']
+        self.columns = [ 'age','race_label','sex_label','disease_label']
+        # print(f"columns: {self.split_df.columns}")
+        # print("A",self.split_df['age'])
+        # print("R",self.split_df['race'])
+        # print("D",self.split_df['disease_label'])
+        # self.samples = {i: preprocess_mimic_samples(self.split_df[i]) for i in self.columns}
+
+        # for k in ["age",'race']:
+
+        #     self.samples[k] = normalize(self.samples[k])
+
+        # print(f"#samples: {len(self.df)}")
 
     def __len__(self):
         return len(self.split_df)
@@ -490,14 +504,41 @@ class MIMIC(Dataset):
                 [sample[k] for k in self.parents_x],
                 dim=0,
             )
+        # print("sample",sample)
         return sample
 
+def inv_preprocess_t(a):
+
+            # print(pa[k])
+    a = (a+ 1) / 2  # [-1,1] -> [0,1]
+    # print(k)
+    # _max, _min = get_attr_max_min(k)
+    a = a * 100
+    return a
 
 def preprocess_mimic(sample: Dict[str, Tensor]) -> Dict[str, Tensor]:
     for k, v in sample.items():
         if k != "x":
             sample[k] = torch.tensor([v])
             if k == "race":
+                sample[k] = F.one_hot(sample[k], num_classes=3).squeeze()
+            elif k == "finding":
+                sample[k] = F.one_hot(sample[k], num_classes=3).squeeze()
+            elif k == "age":
+                # print(sample[k],sample[k] / 100 * 2 - 1, inv_preprocess_t(sample[k] / 100 * 2 - 1))
+                sample[k] = sample[k] / 100 * 2 - 1  # [-1,1]
+
+    return sample
+
+def preprocess_mimic_samples(sample: Dict[str, Tensor]) -> Dict[str, Tensor]:
+    for k, v in sample.items():
+        if k != "x":
+            # print(v)
+            v = v.float()
+            sample[k] = torch.tensor([v])
+            if k == "race_label":
+                sample[k] = F.one_hot(sample[k], num_classes=3).squeeze()
+            elif k == "finding":
                 sample[k] = F.one_hot(sample[k], num_classes=3).squeeze()
             elif k == "age":
                 sample[k] = sample[k] / 100 * 2 - 1  # [-1,1]

@@ -78,6 +78,7 @@ def trainer(
                     else:
                         updates_skipped += 1
                         update_stats = False
+                        stats['n'] += 1e-5
                         logger.info(
                             f"Updates skipped: {updates_skipped}"
                             + f" - grad_norm: {grad_norm:.3f}"

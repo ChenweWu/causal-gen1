@@ -20,6 +20,21 @@ from torch import Tensor, nn
 
 from hps import Hparams
 
+def is_one_hot(tensor):
+    """
+    Check if the given tensor is a valid one-hot tensor.
+
+    Args:
+    tensor (torch.Tensor): A tensor to check.
+
+    Returns:
+    bool: True if tensor is one-hot, False otherwise.
+    """
+    if tensor.ndim != 2:
+        return False
+
+    # Check if there is exactly one '1' in each row and all other elements are '0'
+    return torch.all((tensor.sum(dim=1) == 1) & (tensor.max(dim=1).values == 1) & (tensor.min(dim=1).values == 0))
 
 class BasePGM(nn.Module):
     def __init__(self):
@@ -101,10 +116,17 @@ class BasePGM(nn.Module):
                     "age" not in intervention.keys()
                     and "finding" not in intervention.keys()
                 ):
+                    # print("triggered")
+                    
                     counterfactuals["finding"] = obs["finding"]
-
+                if not is_one_hot(counterfactuals["finding"]):
+                    counterfactuals["finding"] = obs["finding"]
+            # print(';;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;')
+            # print(avg_cfs)
             for k, v in counterfactuals.items():
-                avg_cfs[k] += v / num_particles
+                avg_cfs[k] += v 
+            # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            # print(avg_cfs)
         return avg_cfs
 
 
@@ -536,11 +558,11 @@ class ChestPGM(BasePGM):
         self.variables = {
             "race": "categorical",
             "sex": "binary",
-            "finding": "binary",
+            "finding": "categorical",
             "age": "continuous",
         }
         # Discrete variables that are not root nodes
-        self.discrete_variables = {"finding": "binary"}
+        self.discrete_variables = {"finding": "categorical"}
         # define base distributions
         for k in ["a", "f"]:
             self.register_buffer(f"{k}_base_loc", torch.zeros(1))
@@ -556,15 +578,15 @@ class ChestPGM(BasePGM):
                 # self.age_constraints,
             ]
         )
-        # Finding (conditional) via MLP, a -> f
-        finding_net = DenseNN(1, [8, 16], param_dims=[2], nonlinearity=nn.Sigmoid())
+        # Finding (conditional) via MLP, a -> fss
+        finding_net = DenseNN(1, [8, 16], param_dims=[3], nonlinearity=nn.Softmax())
         self.finding_transform_GumbelMax = ConditionalGumbelMax(
             context_nn=finding_net, event_dim=0
         )
         # log space for sex and race
         self.sex_logit = nn.Parameter(np.log(1 / 2) * torch.ones(1))
         self.race_logits = nn.Parameter(np.log(1 / 3) * torch.ones(1, 3))
-
+        self.finding_logits = nn.Parameter(np.log(1 / 3) * torch.ones(1, 3))
         if args.setup != "sup_pgm":
             from resnet import CustomBlock, ResNet, ResNet18
 
@@ -592,9 +614,9 @@ class ChestPGM(BasePGM):
             # q(r | x) ~ OneHotCategorical(f(x))
             self.encoder_r = ResNet18(num_outputs=3, **kwargs)
             # q(f | x) ~ Bernoulli(f(x))
-            self.encoder_f = ResNet18(num_outputs=1, **kwargs)
+            self.encoder_f = ResNet18(num_outputs=3, **kwargs)
             # q(a | x, f) ~ Normal(mu(x), sigma(x))
-            self.encoder_a = ResNet18(num_outputs=2, context_dim=1, **kwargs)
+            self.encoder_a = ResNet18(num_outputs=2, context_dim=3, **kwargs)
             self.f = (
                 lambda x: args.std_fixed * torch.ones_like(x)
                 if args.std_fixed > 0
@@ -623,6 +645,11 @@ class ChestPGM(BasePGM):
         finding_dist = ConditionalTransformedDistributionGumbelMax(
             finding_dist_base, [self.finding_transform_GumbelMax]
         ).condition(age)
+        # finding_dist_base= dist.OneHotCategorical(logits=self.finding_logits).to_event(1)
+        # # finding_dist_base = dist.RelaxedOneHotCategoricalStraightThrough(temperature = 1e-5,logits=self.finding_logits).to_event(1)
+        # finding_dist = ConditionalTransformedDistribution(
+        #     finding_dist_base, [self.finding_transform_GumbelMax] )   
+            
         finding = pyro.sample("finding", finding_dist)
 
         return {
@@ -645,8 +672,8 @@ class ChestPGM(BasePGM):
                 pyro.sample("race", qr_x)
             # q(f | x)
             if obs["finding"] is None:
-                f_prob = torch.sigmoid(self.encoder_f(obs["x"]))
-                qf_x = dist.Bernoulli(probs=f_prob).to_event(1)
+                f_prob = F.softmax(self.encoder_f(obs["x"]),dim=-1)
+                qf_x = dist.OneHotCategorical(probs=f_prob).to_event(1)
                 obs["finding"] = pyro.sample("finding", qf_x)
             # q(a | x, f)
             if obs["age"] is None:
@@ -673,8 +700,9 @@ class ChestPGM(BasePGM):
             pyro.sample("race_aux", qr_x, obs=obs["race"])
 
             # q(f | x)
-            f_prob = torch.sigmoid(self.encoder_f(obs["x"]))
-            qf_x = dist.Bernoulli(probs=f_prob).to_event(1)
+            f_probs = F.softmax(self.encoder_f(obs["x"]), dim=-1)
+            qf_x= dist.OneHotCategorical(probs=f_probs)  # .to_event(1)
+            # with pyro.poutine.scale(scale=0.5):
             pyro.sample("finding_aux", qf_x, obs=obs["finding"])
 
             # q(a | x, f)
@@ -691,7 +719,7 @@ class ChestPGM(BasePGM):
         # q(r | x)
         r_probs = F.softmax(self.encoder_r(obs["x"]), dim=-1)
         # q(f | x)
-        f_prob = torch.sigmoid(self.encoder_f(obs["x"]))
+        f_prob = F.softmax(self.encoder_f(obs["x"]),dim=-1)
         # q(a | x, f)
         a_loc, _ = self.encoder_a(obs["x"], y=obs["finding"]).chunk(2, dim=-1)
 

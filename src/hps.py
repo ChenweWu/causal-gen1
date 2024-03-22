@@ -57,11 +57,11 @@ HPARAMS_REGISTRY["ukbb64"] = ukbb64
 
 ukbb192 = Hparams()
 ukbb192.update(ukbb64.__dict__)
-ukbb192.input_res = 192
+ukbb192.input_res = 384
 ukbb192.pad = 9
-ukbb192.enc_arch = "192b1d2,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2"
-ukbb192.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2"
-ukbb192.widths = [32, 64, 96, 128, 160, 192, 512]
+ukbb192.enc_arch = "384b2d2,192b2d2,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2"
+ukbb192.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2,384b2"
+ukbb192.widths = [32, 64, 96, 128, 160, 192, 512, 1024]
 HPARAMS_REGISTRY["ukbb192"] = ukbb192
 
 
@@ -77,6 +77,17 @@ mimic192.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2"
 mimic192.widths = [32, 64, 96, 128, 160, 192, 512]
 HPARAMS_REGISTRY["mimic192"] = mimic192
 
+mimic384 = Hparams()
+mimic384.lr = 1e-3
+mimic384.bs = 16
+mimic384.wd = 0.1
+mimic384.z_dim = 16
+mimic384.input_res = 384
+mimic384.pad = 9
+mimic384.enc_arch = "384b1d2,192b1d2,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2"
+mimic384.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2,384b2"
+mimic384.widths = [32, 64, 96, 128, 160, 192, 512,1024]
+HPARAMS_REGISTRY["mimic384"] = mimic384
 
 def setup_hparams(parser: argparse.ArgumentParser) -> Hparams:
     hparams = Hparams()

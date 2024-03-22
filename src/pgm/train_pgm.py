@@ -14,8 +14,13 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from utils_pgm import plot_joint, update_stats
+import os
+import sys
+import inspect
 
-sys.path.append("..")
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir) 
 from datasets import cmnist, get_attr_max_min, mimic, morphomnist, ukbb
 from hps import Hparams
 from train_setup import setup_directories, setup_logging, setup_tensorboard
@@ -23,7 +28,7 @@ from utils import EMA, seed_all, seed_worker
 
 
 def preprocess(
-    batch: Dict[str, Tensor], dataset: str = "ukbb", split: str = "l"
+    batch: Dict[str, Tensor], dataset: str = "mimic", split: str = "l"
 ) -> Dict[str, Tensor]:
     if "x" in batch.keys():
         batch["x"] = (batch["x"].float().cuda() - 127.5) / 127.5  # [-1,1]
@@ -38,12 +43,14 @@ def preprocess(
                 batch[k] = batch[k].unsqueeze(-1)
         else:
             NotImplementedError
-    if "ukbb" in dataset:
-        for k in not_x:
-            if k in ["age", "brain_volume", "ventricle_volume"]:
-                k_max, k_min = get_attr_max_min(k)
-                batch[k] = (batch[k] - k_min) / (k_max - k_min)  # [0,1]
-                batch[k] = 2 * batch[k] - 1  # [-1,1]
+    # if "ukbb" in dataset:
+    for k in not_x:
+        if k in ["age", "brain_volume", "ventricle_volume"]:
+            # print(k,"yes",batch[k])
+            k_max, k_min = get_attr_max_min(k)
+            batch[k] = (batch[k] - k_min) / (k_max - k_min)  # [0,1]
+            batch[k] = 2 * batch[k] - 1  # [-1,1]
+            # print(batch[k])
     return batch
 
 
@@ -224,7 +231,7 @@ def eval_epoch(
             num_corrects = (targets[k].argmax(-1) == preds[k].argmax(-1)).sum()
             stats[k + "_acc"] = num_corrects.item() / targets[k].shape[0]
         elif "mimic" in args.dataset:
-            if k in ["sex", "finding"]:
+            if k in ["sex"]:
                 stats[k + "_rocauc"] = roc_auc_score(
                     targets[k].numpy(), preds[k].numpy(), average="macro"
                 )
@@ -235,7 +242,7 @@ def eval_epoch(
                 preds_k = (preds[k] + 1) * 50  # unormalize
                 targets_k = (targets[k] + 1) * 50  # unormalize
                 stats[k + "_mae"] = (targets_k - preds_k).abs().mean().item()
-            elif k == "race":
+            elif k in ["race","finding"]:
                 num_corrects = (targets[k].argmax(-1) == preds[k].argmax(-1)).sum()
                 stats[k + "_acc"] = num_corrects.item() / targets[k].shape[0]
                 stats[k + "_rocauc"] = roc_auc_score(
@@ -482,7 +489,8 @@ if __name__ == "__main__":
 
         model = ColourMNISTPGM(args)
     else:
-        NotImplementedError
+        from flow_pgm import ChestPGM
+        model = ChestPGM(args)
     ema = EMA(model, beta=0.999)
     model.cuda()
     ema.cuda()

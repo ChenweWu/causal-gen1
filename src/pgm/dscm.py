@@ -40,6 +40,7 @@ class DSCM(nn.Module):
         t_abduct: float = 1.0,
     ) -> Dict[str, Tensor]:
         pa = {k: v for k, v in obs.items() if k != "x"}
+
         # forward vae with factual parents
         _pa = vae_preprocess(self.args, {k: v.clone() for k, v in pa.items()})
         vae_out = self.vae(obs["x"], _pa, beta=self.args.beta)
@@ -50,7 +51,16 @@ class DSCM(nn.Module):
 
         for _ in range(cf_particles):
             # forward pgm, get counterfactual parents
+            # print("DDDDDDDDD")
+            # print(do)
+            # print("DDDDDDDDD")
             cf_pa = self.pgm.counterfactual(obs=pa, intervention=do, num_particles=1)
+            # print("PPPPPPPPPPPPPPPPPPPPPPPPPPPP")
+            # print(pa)
+            # print("PPPPPPPPPPPPPPPPPPPPPPPPPPPP")
+            # print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            # print(cf_pa)
+            # print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
             _cf_pa = vae_preprocess(self.args, {k: v.clone() for k, v in cf_pa.items()})
             # forward vae with counterfactual parents
             zs = self.vae.abduct(obs["x"], parents=_pa, t=t_abduct)  # z ~ q(z|x,pa)
@@ -78,7 +88,7 @@ class DSCM(nn.Module):
         cfs.update(cf_pa)
         if check_nan(vae_out) > 0 or check_nan(cfs) > 0:
             return {"loss": torch.tensor(float("nan"))}
-
+        # print("CF",cfs,"CFE")
         aux_loss = (
             elbo_fn.differentiable_loss(
                 self.predictor.model_anticausal, self.predictor.guide_pass, **cfs

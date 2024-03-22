@@ -1,5 +1,5 @@
 #!/bin/bash
-exp_name="mimic1"
+exp_name="mimic1g192"
 run_cmd="python main.py \
     --exp_name=$exp_name \
     --data_dir=/home/ubuntu/mimic/ \
@@ -45,10 +45,10 @@ run_cmd="python main.py \
 #     --z_max_res=96 \
 #     --eval_freq=4"
 
-# if [ "$2" = "nohup" ]
-# then
-#   nohup ${run_cmd} > $exp_name.out 2>&1 &
-#   echo "Started training in background with nohup, PID: $!"
-# else
-#   ${run_cmd}
-# fi
+if [ "$2" = "nohup" ]
+then
+  nohup ${run_cmd} > $exp_name.out 2>&1 &
+  echo "Started training in background with nohup, PID: $!"
+else
+  ${run_cmd}
+fi

@@ -264,6 +264,7 @@ class Decoder(nn.Module):
 
             if block.stochastic:
                 if x is not None:  # z_i ~ q(z_i | z_<i, x, pa_x)
+                    # print(res)
                     q_loc, q_logscale = block.forward_posterior(h, x[res], pa, t=t)
                     z = sample_gaussian(q_loc, q_logscale)
                     stat = dict(kl=gaussian_kl(q_loc, q_logscale, p_loc, p_logscale))

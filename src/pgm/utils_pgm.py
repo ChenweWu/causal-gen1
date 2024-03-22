@@ -284,3 +284,191 @@ def plot_cf(
     if var_cf_x is not None:
         ax[3, 0].set_ylabel("Uncertainty", fontsize=fs + 4, labelpad=pad)
     return fig
+import os
+import torch
+from PIL import Image
+from torchvision.utils import save_image
+@torch.no_grad()
+def plot_cf_mimic(
+    x: Tensor,
+    cf_x: Tensor,
+    pa: Dict[str, Tensor],
+    cf_pa: Dict[str, Tensor],
+    do: Dict[str, Tensor],
+    var_cf_x: Optional[Tensor],
+    num_images: int = 8,
+    step: int = 0,
+    is_train: bool = False,
+    epoch: int = 0
+):
+    n = num_images  # 8 columns
+    # print(x.shape)
+    x1 =(x.detach().cpu() + 1) * 127.5
+    cf_x1=(cf_x.detach().cpu() + 1) * 127.5
+    x = (x[:n].detach().cpu() + 1) * 127.5
+    cf_x = (cf_x[:n].detach().cpu() + 1) * 127.5
+    # print(cf_pa)
+
+    fs = 24  # font size
+    pad = 8
+    m = 3 if var_cf_x is None else 4  # nrows
+    s = 4
+    fig, ax = plt.subplots(m, n, figsize=(n * s - 6, m * s), facecolor="white")
+    # fig, ax = plt.subplots(m, n, figsize=(n*s, m*s+2))
+    _, _ = plot(x, ax=ax[0])
+    _, _ = plot(cf_x, ax=ax[1])
+    _, _ = plot(
+        cf_x - x,
+        ax=ax[2],
+        fig=fig,
+        cmap="RdBu_r",
+        cbar=True,
+        norm=MidpointNormalize(midpoint=0),
+    )
+    if var_cf_x is not None:
+        _, _ = plot(
+            var_cf_x[:n].clamp(min=0).detach().sqrt().cpu(),
+            fig=fig,
+            cmap="jet",
+            ax=ax[3],
+            cbar=True,
+            set_cbar_ticks=False,
+        )
+
+    sex_categories = ["male", "female"]  # 0,1
+    race_categories = ["white", "asian","black"]  # 0,1,2
+    findings_categories = ['no','lesion','pneu'] #0,1,2
+
+    for j in range(n):
+        msg = r"$do($"
+        for i, (k, v) in enumerate(do.items()):
+            # print(k,v)
+            if k == "sex":
+                vv = sex_categories[int(v[j].item())]
+                kk = "s"
+            elif k == "race":
+                vv = race_categories[int(torch.argmax(v[j]))]
+                kk = "r"
+            elif k == "age":
+                vv = str(v[j].item())
+                kk = "a"
+            else:
+                vv = findings_categories[int(torch.argmax(v[j]))]
+                kk = 'f'
+            msg += rf"${kk}{{=}}$" + f"{vv}"
+            msg += ", " if (i + 1) < len(list(do.keys())) else ""
+
+        ax[1, j].set_title(msg + r"$)$", fontsize=fs - 2, pad=pad + 4)
+
+        s = str(sex_categories[int(pa["sex"][j].item())])
+        m = str(race_categories[int(torch.argmax(pa["race"][j]))])
+        a = str(int(pa["age"][j].item()))
+        f = str(findings_categories[int(torch.argmax(pa["finding"][j]))])
+        # ax[0,j].set_title(rf'$a{{=}}{a}, \ s{{=}}{s}, \ m{{=}}{m}$' +'\n'+ rf'$b{{=}}{b}, \ v{{=}}{v}$',
+        #                 pad=pad, fontsize=fs-4, multialignment='center', linespacing=1.5)
+
+        ax[0, j].set_title(
+            rf"$m{{=}}$"
+            + f"{m}"
+            + "$, \ a{{=}}$"
+            + f"{a}"
+            + rf"$, \ s{{=}}$"
+            + f"{s}"
+            + "\n"
+            + rf"$f{{=}}{f}$",
+            pad=pad + 2,
+            fontsize=fs - 8,
+            multialignment="center",
+            linespacing=1.5,
+        )
+
+        # plot counterfactual
+        cf_s = str(sex_categories[int(cf_pa["sex"][j].item())])
+        cf_m = str(race_categories[int(torch.argmax(cf_pa["race"][j]))])
+        cf_a = str(np.round(cf_pa["age"][j].item(), 1))
+        cf_f = str(findings_categories[int(torch.argmax(cf_pa["finding"][j]))])
+
+        # ax[1, j].set_xlabel(rf'$\widetilde{{a}}{{=}}{cf_a}, \ \widetilde{{s}}{{=}}{cf_s}, \ \widetilde{{m}}{{=}}{cf_m}$' +'\n'+
+        #     rf'$\widetilde{{b}}{{=}}{cf_b}, \ \widetilde{{v}}{{=}}{cf_v}$',
+        #                 labelpad=pad+1, fontsize=fs-4, multialignment='center', linespacing=1.25)
+
+        ax[1, j].set_xlabel(
+            rf"$\widetilde{{m}}{{=}}$"
+            + f"{cf_m}"
+            + "$, \ \widetilde{{a}}{{=}}$"
+            + f"{cf_a}"
+            rf"$, \ \widetilde{{s}}{{=}}$"
+            + f"{cf_s}"
+            + "\n"
+            + rf"$\widetilde{{f}}{{=}}{cf_f}$",
+            labelpad=pad + 4,
+            fontsize=fs - 8,
+            multialignment="center",
+            linespacing=1.25,
+        )
+
+    ax[0, 0].set_ylabel("Observation", fontsize=fs + 4, labelpad=pad)
+    ax[1, 0].set_ylabel("Counterfactual", fontsize=fs + 4, labelpad=pad)
+    ax[2, 0].set_ylabel("Direct Effect", fontsize=fs + 4, labelpad=pad)
+    if var_cf_x is not None:
+        ax[3, 0].set_ylabel("Uncertainty", fontsize=fs + 4, labelpad=pad)
+
+
+    if is_train == True:
+        tr = 'train'
+    else:
+        tr = 'val'
+    base_dir = f"/home/ubuntu/cf_output5/{tr}_epoch{epoch}step_{step}"
+    os.makedirs(base_dir, exist_ok=True)
+    for j in range(n):
+        msg = r"$do($"
+        for i, (k, v) in enumerate(do.items()):
+            # print(k,v)
+            if k == "sex":
+                vv = sex_categories[int(v[j].item())]
+                kk = "s"
+            elif k == "race":
+                vv = race_categories[int(torch.argmax(v[j]))]
+                kk = "r"
+            elif k == "age":
+                vv = str(v[j].item())
+                kk = "a"
+            else:
+                vv = findings_categories[int(torch.argmax(v[j]))]
+                kk = 'f'
+            msg += rf"${kk}{{=}}$" + f"{vv}"
+            msg += ", " if (i + 1) < len(list(do.keys())) else ""
+
+        # ax[1, j].set_title(msg + r"$)$", fontsize=fs - 2, pad=pad + 4)
+
+        s = str(sex_categories[int(pa["sex"][j].item())])
+        m = str(race_categories[int(torch.argmax(pa["race"][j]))])
+        a = str(int(pa["age"][j].item()))
+        f = str(findings_categories[int(torch.argmax(pa["finding"][j]))])
+        # ax[0,j].set_title(rf'$a{{=}}{a}, \ s{{=}}{s}, \ m{{=}}{m}$' +'\n'+ rf'$b{{=}}{b}, \ v{{=}}{v}$',
+        #                 pad=pad, fontsize=fs-4, multialignment='center', linespacing=1.5)
+
+        # plot counterfactual
+        cf_s = str(sex_categories[int(cf_pa["sex"][j].item())])
+        cf_m = str(race_categories[int(torch.argmax(cf_pa["race"][j]))])
+        cf_a = str(np.round(cf_pa["age"][j].item(), 1))
+        cf_f = str(findings_categories[int(torch.argmax(cf_pa["finding"][j]))])
+
+        # ax[1, j].set_xlabel(rf'$\widetilde{{a}}{{=}}{cf_a}, \ \widetilde{{s}}{{=}}{cf_s}, \ \widetilde{{m}}{{=}}{cf_m}$' +'\n'+
+        #     rf'$\widetilde{{b}}{{=}}{cf_b}, \ \widetilde{{v}}{{=}}{cf_v}$',
+        #                 labelpad=pad+1, fontsize=fs-4, multialignment='center', linespacing=1.25)
+
+        # print(x.shape,cf_x.shape)
+        # Extracting the image from tensor
+        img = x1[j].squeeze() # Remove channel dimension if it's 1
+        cf_img = cf_x1[j].squeeze()
+
+        # Constructing filenames
+        img_filename = f"{j}_{s}_{m}_{a}_{f}.png"
+        cf_img_filename = f"{j}_cf_{cf_s}_{cf_m}_{cf_a}_{cf_f}.png"
+
+        # Saving the images
+        plt.imsave(os.path.join(base_dir, img_filename), img, cmap='gray')
+        plt.imsave(os.path.join(base_dir, cf_img_filename), cf_img, cmap='gray')
+
+    return fig

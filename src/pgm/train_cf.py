@@ -15,7 +15,7 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from train_pgm import eval_epoch, preprocess, sup_epoch
-from utils_pgm import plot_cf, update_stats
+from utils_pgm import plot_cf, update_stats, plot_cf_mimic
 
 from train_pgm import setup_dataloaders, setup_dataloaders_cf
 sys.path.append("..")
@@ -30,15 +30,30 @@ def loginfo(title: str, logger: Any, stats: Dict[str, Any]):
     logger.info(f"{title} | " + " - ".join(f"{k}: {v:.4f}" for k, v in stats.items()))
 
 
+# def inv_preprocess(pa: Dict[str, Tensor]) -> Dict[str, Tensor]:
+#     # undo [-1,1] parent preprocessing back to original range
+#     for k, v in pa.items():
+#         if k != "mri_seq" and k != "sex":
+#             pa[k] = (v + 1) / 2  # [-1,1] -> [0,1]
+#             print(k)
+#             _max, _min = get_attr_max_min(k)
+#             pa[k] = pa[k] * (_max - _min) + _min
+#     return pa
+
 def inv_preprocess(pa: Dict[str, Tensor]) -> Dict[str, Tensor]:
     # undo [-1,1] parent preprocessing back to original range
     for k, v in pa.items():
-        if k != "mri_seq" and k != "sex":
+        if k == "age":
             pa[k] = (v + 1) / 2  # [-1,1] -> [0,1]
-            _max, _min = get_attr_max_min(k)
-            pa[k] = pa[k] * (_max - _min) + _min
+            # print(k)
+            _max, _min = 73,44
+            pa[k] = pa[k] * (_max - _min) + _min            
+            pa[k] = (pa[k] + 1) / 2  # [-1,1] -> [0,1]
+            # print(k)
+            # _max, _min = get_attr_max_min(k)
+            pa[k] = pa[k] * 100
+            # print(pa[k],k,v)
     return pa
-
 
 def save_plot(
     save_path: str,
@@ -47,8 +62,11 @@ def save_plot(
     do: Dict[str, Tensor],
     var_cf_x: Optional[Tensor] = None,
     num_images: int = 10,
+    step: int = 0,
+    is_train: bool = False,
+    epoch: int = 0
 ) -> None:
-    _ = plot_cf(
+    _ = plot_cf_mimic(
         obs["x"],
         cfs["x"],
         inv_preprocess({k: v for k, v in obs.items() if k != "x"}),  # pa
@@ -56,6 +74,8 @@ def save_plot(
         inv_preprocess(do),
         var_cf_x,  # counterfactual variance per pixel
         num_images=num_images,
+        step = step
+       
     )
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -84,7 +104,8 @@ def get_metrics(
                 norm = 1000 if "volume" in k else 1  # for volume in ml
                 stats[k + "_mae"] = (targets[k] - preds_k).abs().mean().item() / norm
         elif "mimic" in dataset:
-            if k in ["sex", "finding"]:
+            if k in ["sex"]:
+                
                 stats[k + "_rocauc"] = roc_auc_score(
                     targets[k].numpy(), preds[k].numpy(), average="macro"
                 )
@@ -95,7 +116,7 @@ def get_metrics(
                 preds_k = (preds[k] + 1) * 50  # unormalize
                 targets_k = (targets[k] + 1) * 50  # unormalize
                 stats[k + "_mae"] = (targets_k - preds_k).abs().mean().item()
-            elif k == "race":
+            elif k in ["finding", "race"]:
                 num_corrects = (targets[k].argmax(-1) == preds[k].argmax(-1)).sum()
                 stats[k + "_acc"] = num_corrects.item() / targets[k].shape[0]
                 stats[k + "_rocauc"] = roc_auc_score(
@@ -117,9 +138,14 @@ def cf_epoch(
     elbo_fn: TraceStorage_ELBO,
     optimizers: Optional[Tuple] = None,
     split: str = "train",
+    epoch : int = 0
 ):
     "counterfactual auxiliary training/eval epoch"
     is_train = split == "train"
+    if is_train:
+        print("ZZZZZZZZZZZZZZZZZZZZSWITCH TO TRAIN MODEZZZZZZZZZZZZZZZZZZZZZ")
+    else:
+        print("ZZZZZZZZZZZZZZZZZZZZZSWITCH TO VAL MODEZZZZZZZZZZZZZZZZZZZZZ")
     model.vae.train(is_train)
     model.pgm.eval()
     model.predictor.eval()
@@ -127,38 +153,50 @@ def cf_epoch(
     steps_skipped = 0
 
     dag_vars = list(model.pgm.variables.keys())
-    print(dag_vars)
+    # print(dag_vars)
     if is_train and isinstance(optimizers, tuple):
         optimizer, lagrange_opt = optimizers
     else:
         preds = {k: [] for k in dag_vars}
         targets = {k: [] for k in dag_vars}
-        train_set = copy.deepcopy(dataloaders["train"].dataset.samples)
+        # train_set = copy.deepcopy(dataloaders["train"].dataset.samples)
 
     loader = tqdm(
         enumerate(dataloaders[split]), total=len(dataloaders[split]), mininterval=0.1
     )
+    from collections import deque
+
+    # Initialize a deque with a fixed size of 100
+    grad_norm_buffer = deque(maxlen=100)
+
+    # Variables to keep track of the sum and average
+    sum_grad_norm = 0.0
+    avg_grad_norm = 0.0
 
     for i, batch in loader:
         bs = batch["x"].shape[0]
         batch = preprocess(batch)
-        print("batch",batch)
+        # print("batch",batch)
+        # if i>5:
+        #     break
         with torch.no_grad():
             # randomly intervene on a single parent do(pa_k ~ p(pa_k))
             do = {}
             do_k =  random.choice(dag_vars)
+            do[do_k] = batch[do_k].clone()[torch.randperm(bs)]
             if is_train:
-                print(do_k)
+                # print(do_k)
                 do[do_k] = batch[do_k].clone()[torch.randperm(bs)]
             else:
-                idx = torch.randperm(train_set[do_k].shape[0])
-                do[do_k] = train_set[do_k].clone()[idx][:bs]
+                # idx = torch.randperm(train_set[do_k].shape[0])
+                # do[do_k] = train_set[do_k].clone()[idx][:bs]
+                do[do_k] = batch[do_k].clone()[torch.randperm(bs)]
                 do = preprocess(do)
 
         with torch.set_grad_enabled(is_train):
-            # if not is_train:
-            #     args.cf_particles = 5 if i == 0 else 1
-
+            if not is_train:
+                args.cf_particles = 5 if i == 0 else 1
+            # print("DO",do,"DO")
             out = model.forward(batch, do, elbo_fn, cf_particles=args.cf_particles)
 
             if torch.isnan(out["loss"]):
@@ -167,43 +205,71 @@ def cf_epoch(
                 continue
 
         if is_train:
+            # print("==============================================")
             args.step = i + (args.epoch - 1) * len(dataloaders[split])
             optimizer.zero_grad(set_to_none=True)
             lagrange_opt.zero_grad(set_to_none=True)
             out["loss"].backward()
             grad_norm = nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            if len(grad_norm_buffer) == 100:
+                # Subtract the oldest value from the sum
+                sum_grad_norm -= grad_norm_buffer[0]
 
-            if grad_norm < args.grad_skip:
-                optimizer.step()
-                lagrange_opt.step()  # gradient ascent on lmbda
-                model.lmbda.data.clamp_(min=0)
-                ema.update()
+            grad_norm_buffer.append(grad_norm)
+            sum_grad_norm += grad_norm
+
+            # Compute the running average
+            avg_grad_norm = sum_grad_norm / len(grad_norm_buffer)
+            if i<1000:
+                if True:
+                    optimizer.step()
+                    lagrange_opt.step()  # gradient ascent on lmbda
+                    model.lmbda.data.clamp_(min=0)
+                    ema.update()
+                else:
+                    steps_skipped += 1
+                    print(f"Steps skipped: {steps_skipped} - grad_norm: {grad_norm:.3f}")
             else:
-                steps_skipped += 1
-                print(f"Steps skipped: {steps_skipped} - grad_norm: {grad_norm:.3f}")
+                if grad_norm< avg_grad_norm*0.6:
+                    optimizer.step()
+                    lagrange_opt.step()  # gradient ascent on lmbda
+                    model.lmbda.data.clamp_(min=0)
+                    ema.update()
+                else:
+                    steps_skipped += 1
+                    print(f"Steps skipped: {steps_skipped} - grad_norm: {grad_norm:.3f}")
         else:  # evaluation
+            # print("++++++++++++++++++++++++++++++++++++++++++++++")
             with torch.no_grad():
                 preds_cf = ema.ema_model.predictor.predict(**out["cfs"])
                 for k, v in preds_cf.items():
                     preds[k].extend(v)
                 # interventions are the targets for prediction
                 for k in targets.keys():
+                    # print("k keys",k)
                     t_k = do[k].clone() if k in do.keys() else out["cfs"][k].clone()
+                    # print("tk",t_k)
+                    # print("tgs",targets)
+                    # print("pcf",preds_cf)
                     targets[k].extend(inv_preprocess({k: t_k})[k])
 
         if i % args.plot_freq == 0:
+        # if True:
             if is_train:
+                print(is_train)
                 copy_do_pa = copy.deepcopy(args.do_pa)
                 for pa_k in dag_vars + [None]:
                     args.do_pa = pa_k
-                    valid_stats, valid_metrics = cf_epoch(  # recursion
-                        args, model, ema, dataloaders, elbo_fn, None, split="valid"
-                    )
-                    loginfo(f"valid do({pa_k})", logger, valid_stats)
-                    loginfo(f"valid do({pa_k})", logger, valid_metrics)
+                    # print("INNER VALID]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]")
+                    # valid_stats, valid_metrics = cf_epoch(  # recursion
+                    #     args, model, ema, dataloaders, elbo_fn, None, split="valid"
+                    # )
+                    # print("INNER VALID COMPLETED KKKKKKKKKKKKKKKKKKKKKKK")
+                    # loginfo(f"valid do({pa_k})", logger, valid_stats)
+                    # loginfo(f"valid do({pa_k})", logger, valid_metrics)
                 args.do_pa = copy_do_pa
-            # save_path = os.path.join(args.save_dir, f'{args.step}_{split}_{do_k}_cfs.pdf')
-            # save_plot(save_path, batch, out['cfs'], do, out['var_cf_x'], num_images=args.imgs_plot)
+            save_path = os.path.join(args.save_dir, f'{args.step}_{split}_{do_k}_cfs.pdf')
+            save_plot(save_path, batch, out['cfs'], do, out['var_cf_x'], num_images=6,step = i,is_train=is_train,epoch = epoch)
 
         stats["n"] += bs
         stats["loss"] += out["loss"].item() * bs
@@ -224,6 +290,10 @@ def cf_epoch(
 
 
 if __name__ == "__main__":
+    import warnings
+
+# Suppress UserWarnings
+    warnings.filterwarnings("ignore", category=UserWarning)
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", help="experiment name.", type=str, default="")
     parser.add_argument(
@@ -310,29 +380,29 @@ if __name__ == "__main__":
     predictor = ChestPGM(predictor_args).cuda()
     predictor.load_state_dict(predictor_checkpoint["ema_model_state_dict"])
 
-    # for backwards compatibility
-    if not hasattr(predictor_args, "dataset"):
-        predictor_args.dataset = "ukbb"
-    if hasattr(predictor_args, "loss_norm"):
-        args.loss_norm
+    # # for backwards compatibility
+    # if not hasattr(predictor_args, "dataset"):
+    #     predictor_args.dataset = "ukbb"
+    # if hasattr(predictor_args, "loss_norm"):
+    #     args.loss_norm
 
 
-    if args.data_dir != "":
-        predictor_args.data_dir = args.data_dir
-    dataloaders = setup_dataloaders(predictor_args)
-    elbo_fn = TraceStorage_ELBO(num_particles=1)
+    # if args.data_dir != "":
+    #     predictor_args.data_dir = args.data_dir
+    # dataloaders = setup_dataloaders(predictor_args)
+    # elbo_fn = TraceStorage_ELBO(num_particles=1)
 
-    test_stats = sup_epoch(
-        predictor_args,
-        predictor,
-        None,
-        dataloaders["test"],
-        elbo_fn,
-        optimizer=None,
-        is_train=False,
-    )
-    stats = eval_epoch(predictor_args, predictor, dataloaders["test"])
-    print("test | " + " - ".join(f"{k}: {v:.4f}" for k, v in stats.items()))
+    # test_stats = sup_epoch(
+    #     predictor_args,
+    #     predictor,
+    #     None,
+    #     dataloaders["test"],
+    #     elbo_fn,
+    #     optimizer=None,
+    #     is_train=False,
+    # )
+    # stats = eval_epoch(predictor_args, predictor, dataloaders["test"])
+    # print("test | " + " - ".join(f"{k}: {v:.4f}" for k, v in stats.items()))
 
     # Load PGM
     print(f"\nLoading PGM checkpoint: {args.pgm_path}")
@@ -342,17 +412,17 @@ if __name__ == "__main__":
     pgm = ChestPGM(pgm_args).cuda()
     pgm.load_state_dict(pgm_checkpoint["ema_model_state_dict"])
 
-    # for backwards compatibility
-    if not hasattr(pgm_args, "dataset"):
-        pgm_args.dataset = "ukbb"
-    if args.data_dir != "":
-        pgm_args.data_dir = args.data_dir
-    dataloaders = setup_dataloaders(pgm_args)
-    elbo_fn = TraceStorage_ELBO(num_particles=1)
+    # # for backwards compatibility
+    # if not hasattr(pgm_args, "dataset"):
+    #     pgm_args.dataset = "ukbb"
+    # if args.data_dir != "":
+    #     pgm_args.data_dir = args.data_dir
+    # dataloaders = setup_dataloaders(pgm_args)
+    # elbo_fn = TraceStorage_ELBO(num_particles=1)
 
-    test_stats = sup_epoch(
-        pgm_args, pgm, None, dataloaders["test"], elbo_fn, is_train=False
-    )
+    # test_stats = sup_epoch(
+    #     pgm_args, pgm, None, dataloaders["test"], elbo_fn, is_train=False
+    # )
 
     # Load deep VAE
     print(f"\nLoading VAE checkpoint: {args.vae_path}")
@@ -367,43 +437,43 @@ if __name__ == "__main__":
     vae = HVAE(vae_args).cuda()
     vae.load_state_dict(vae_checkpoint["ema_model_state_dict"])
 
-    # vae_args.data_dir = None  # adjust data_dir as needed
-    if args.data_dir != "":
-        vae_args.data_dir = args.data_dir
-    # vae_args['dataset'] = args.dataset
-    dataloaders = setup_dataloaders_cf(vae_args)
+    # # vae_args.data_dir = None  # adjust data_dir as needed
+    # if args.data_dir != "":
+    #     vae_args.data_dir = args.data_dir
+    # # vae_args['dataset'] = args.dataset
+    # dataloaders = setup_dataloaders_cf(vae_args)
 
-    @torch.no_grad()
-    def vae_epoch(args, vae, dataloader):
-        vae.eval()
-        stats = {k: 0 for k in ["elbo", "nll", "kl", "n"]}
-        loader = tqdm(enumerate(dataloader), total=len(dataloader))
+    # @torch.no_grad()
+    # def vae_epoch(args, vae, dataloader):
+    #     vae.eval()
+    #     stats = {k: 0 for k in ["elbo", "nll", "kl", "n"]}
+    #     loader = tqdm(enumerate(dataloader), total=len(dataloader))
 
-        for i, batch in loader:
-            # preprocessing
-            batch["x"] = (batch["x"].cuda().float() - 127.5) / 127.5  # [-1, 1]
-            batch["pa"] = (
-                batch["pa"][..., None, None]
-                .repeat(1, 1, args.input_res, args.input_res)
-                .cuda()
-                .float()
-            )
-            # forward pass
-            out = vae(batch["x"], batch["pa"], beta=args.beta)
-            # update stats
-            bs = batch["x"].shape[0]
-            stats["n"] += bs  # samples seen counter
-            stats["elbo"] += out["elbo"] * bs
-            stats["nll"] += out["nll"] * bs
-            stats["kl"] += out["kl"] * bs
-            loader.set_description(
-                f' => eval | nelbo: {stats["elbo"] / stats["n"]:.4f}'
-                + f' - nll: {stats["nll"] / stats["n"]:.4f}'
-                + f' - kl: {stats["kl"] / stats["n"]:.4f}'
-            )
-        return {k: v / stats["n"] for k, v in stats.items() if k != "n"}
+    #     for i, batch in loader:
+    #         # preprocessing
+    #         batch["x"] = (batch["x"].cuda().float() - 127.5) / 127.5  # [-1, 1]
+    #         batch["pa"] = (
+    #             batch["pa"][..., None, None]
+    #             .repeat(1, 1, args.input_res, args.input_res)
+    #             .cuda()
+    #             .float()
+    #         )
+    #         # forward pass
+    #         out = vae(batch["x"], batch["pa"], beta=args.beta)
+    #         # update stats
+    #         bs = batch["x"].shape[0]
+    #         stats["n"] += bs  # samples seen counter
+    #         stats["elbo"] += out["elbo"] * bs
+    #         stats["nll"] += out["nll"] * bs
+    #         stats["kl"] += out["kl"] * bs
+    #         loader.set_description(
+    #             f' => eval | nelbo: {stats["elbo"] / stats["n"]:.4f}'
+    #             + f' - nll: {stats["nll"] / stats["n"]:.4f}'
+    #             + f' - kl: {stats["kl"] / stats["n"]:.4f}'
+    #         )
+    #     return {k: v / stats["n"] for k, v in stats.items() if k != "n"}
 
-    stats = vae_epoch(vae_args, vae, dataloaders["test"])
+    # stats = vae_epoch(vae_args, vae, dataloaders["test"])
 
     # setup current experiment args
     args.beta = vae_args.beta
@@ -484,18 +554,20 @@ if __name__ == "__main__":
         for epoch in range(args.start_epoch, args.epochs):
             args.epoch = epoch + 1
             logger.info(f"Epoch: {args.epoch}")
+            # print("[[[[[[[[[[[[[[[[[[[[[[[[TRAIN EPOCH]]]]]]]]]]]]]]]]]]]]]]]]")
             stats = cf_epoch(
-                args, model, ema, dataloaders, elbo_fn, optimizers, split="train"
+                args, model, ema, dataloaders, elbo_fn, optimizers, split="train", epoch=epoch
             )
             loginfo("train", logger, stats)
 
             if epoch % args.eval_freq == 0:
                 # evaluate single parent interventions
+                # print("VALID EPOCH]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]")
                 copy_do_pa = copy.deepcopy(args.do_pa)
                 for pa_k in list(model.pgm.variables.keys()) + [None]:
                     args.do_pa = pa_k
                     valid_stats, metrics = cf_epoch(
-                        args, model, ema, dataloaders, elbo_fn, None, split="valid"
+                        args, model, ema, dataloaders, elbo_fn, None, split="valid", epoch=epoch
                     )
                     loginfo(f"valid do({pa_k})", logger, valid_stats)
                     loginfo(f"valid do({pa_k})", logger, metrics)
@@ -516,7 +588,7 @@ if __name__ == "__main__":
                 if valid_stats["loss"] < args.best_loss:
                     args.best_loss = valid_stats["loss"]
                     ckpt_path = os.path.join(
-                        args.save_dir, f"{args.step}_checkpoint.pt"
+                        args.save_dir, f"epoch{epoch}_step{args.step}_checkpoint.pt"
                     )
                     torch.save(
                         {
@@ -536,6 +608,7 @@ if __name__ == "__main__":
         # test model
         model.load_state_dict(ckpt["model_state_dict"])
         ema.ema_model.load_state_dict(ckpt["ema_model_state_dict"])
+        print("test mode ]]]]]]]]]]]]]")
         stats, metrics = cf_epoch(
             args, model, ema, dataloaders, elbo_fn, None, split="test"
         )

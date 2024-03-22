@@ -109,7 +109,7 @@ class ArgMaxGumbelMax(Transform):
         super(ArgMaxGumbelMax, self).__init__(cache_size=cache_size)
         self.logits = logits
         self._event_dim = event_dim
-        self._categorical = pyro.distributions.torch.Categorical(
+        self._categorical = pyro.distributions.torch.OneHotCategorical(
             logits=self.logits
         ).to_event(0)
 
@@ -145,29 +145,69 @@ class ArgMaxGumbelMax(Transform):
         """Infer the Gumbel posteriors"""
         assert self.logits != None, "Logits not defined."
 
-        uniforms = torch.rand(
-            self.logits.shape,
-            dtype=self.logits.dtype,
-            device=self.logits.device,
-        )
-        gumbels = -((-(uniforms.log())).log())
-        # (batch_size, num_classes) mask to select kth class
-        mask = F.one_hot(
-            k.squeeze(-1).to(torch.int64), num_classes=self.logits.shape[-1]
-        )
-        # (batch_size, 1) select topgumbel for truncation of other classes
-        topgumbel = (mask * gumbels).sum(dim=-1, keepdim=True) - (
-            mask * self.logits
-        ).sum(dim=-1, keepdim=True)
-        mask = 1 - mask  # invert mask to select other != k classes
-        g = gumbels + self.logits
-        # (batch_size, num_classes)
-        epsilons = -torch.log(mask * torch.exp(-g) + torch.exp(-topgumbel)) - (
-            mask * self.logits
-        )
+        # uniforms = torch.rand(
+        #     self.logits.shape,
+        #     dtype=self.logits.dtype,
+        #     device=self.logits.device,
+        # )
+        # gumbels = -((-(uniforms.log())).log())
+        # # (batch_size, num_classes) mask to select kth class
+        # # mask = F.one_hot(
+        # #     k.squeeze(-1).to(torch.int64), num_classes=self.logits.shape[-1]
+        # # )
+        # mask = k
+        # # print("k",k)
+        # # print(mask.shape)
+        # # print(gumbels.shape)
+        # # (batch_size, 1) select topgumbel for truncation of other classes
+        # topgumbel = (mask * gumbels).sum(dim=-1, keepdim=True) - (
+        #     mask * self.logits
+        # ).sum(dim=-1, keepdim=True)
+        # mask = 1 - mask  # invert mask to select other != k classes
+        # g = gumbels + self.logits
+        # # (batch_size, num_classes)
+        # epsilons = -torch.log(mask * torch.exp(-g) + torch.exp(-topgumbel)) - (
+        #     mask * self.logits
+        # ) 
+        def sample_gumbel(shape, eps=1e-20):
+            U = torch.rand(shape)
+            
+            U = U.cuda()
+            return -torch.log(-torch.log(U + eps) + eps)
+        def gumbel_softmax_sample(logits, temperature):
+            y = logits + sample_gumbel(logits.shape)
+            return F.softmax(y / temperature, dim=-1)
+        def gumbel_softmax(logits, temperature,k, hard=False):
+            """
+            ST-gumple-softmax
+            input: [*, n_class]
+            return: flatten --> [*, n_class] an one-hot vector
+            """
+            y = gumbel_softmax_sample(logits, temperature)
+
+            if not hard:
+                return y.view(-1, logits.shape[-1])
+
+            shape = y.size()
+            _, ind = k.max(dim=-1)
+            y_hard = torch.zeros_like(y).view(-1, shape[-1])
+            y_hard.scatter_(1, ind.view(-1, 1), 1)
+            y_hard = y_hard.view(*shape)
+            # Set gradients w.r.t. y_hard gradients w.r.t. y
+            y_hard = (y_hard - y).detach() + y
+            return y_hard.view(-1, logits.shape[-1])
+        epsilons = gumbel_softmax(self.logits,1e-3,k)
+        # print("e",epsilons)
+        # print("+++++++++++++++++++++++++++++++++++++++++++++++")
         return epsilons
 
     def log_abs_det_jacobian(self, x,y):
+    #    print("xxxxxxxxx")
+    #    print(y, y.squeeze(-1),-self._categorical.log_prob(y.squeeze(-1)),-self._categorical.log_prob(y.squeeze(-1)).unsqueeze(-1))
+    
+        # print(y.shape, y.squeeze(-1).shape,-self._categorical.log_prob(y.squeeze(-1)).shape,-self._categorical.log_prob(y.squeeze(-1)).unsqueeze(-1).shape)
+        # print("___________________________________________________")
+        # print(-self._categorical.log_prob(y.squeeze(-1)).unsqueeze(-1))
         return -self._categorical.log_prob(y.squeeze(-1)).unsqueeze(-1)
 
 
@@ -182,6 +222,7 @@ class ConditionalGumbelMax(ConditionalTransformModule):
         return ArgMaxGumbelMax(logits)
 
     def _logits(self, context):
+        # print("context",context)
         return self.context_nn(context)
 
     @property
@@ -201,6 +242,7 @@ class TransformedDistributionGumbelMax(TransformedDistribution, TorchDistributio
     arg_constraints: Dict[str, constraints.Constraint] = {}
 
     def log_prob(self, value):
+        # print(value)
         if self._validate_args:
             self._validate_sample(value)
         event_dim = len(self.event_shape)
@@ -221,6 +263,7 @@ class ConditionalTransformedDistributionGumbelMax(ConditionalTransformedDistribu
     def condition(self, context):
         base_dist = self.base_dist.condition(context)
         transforms = [t.condition(context) for t in self.transforms]
+        # print("tttttt",transforms[0])
         return TransformedDistributionGumbelMax(base_dist, transforms)
 
     def clear_cache(self):

@@ -1,6 +1,6 @@
 #!/bin/bash
-model_name='pgm_mimic'
-exp_name=$model_name'-pgm'
+model_name='pgm_mimicg'
+exp_name=$model_name'-pgmg'
 parents='a_r_s_f'
 mkdir -p "../../checkpoints/$parents/$exp_name"
 
@@ -9,7 +9,7 @@ run_cmd="python train_pgm.py \
     --exp_name=$exp_name \
     --dataset mimic \
     --data_dir=/home/ubuntu/mimic/ \
-    --hps mimic192 \
+    --hps mimic384 \
     --setup sup_pgm \
     --parents_x age race sex finding \
     --context_dim=16 \
