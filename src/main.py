@@ -47,6 +47,11 @@ def main(args: Hparams):
         model = VAE(args)
     else:
         NotImplementedError
+        
+    #print(model)
+    if torch.cuda.device_count() > 1:
+        pass
+        #model = torch.nn.DataParallel(model)
 
     def init_bias(m):
         if type(m) == torch.nn.Conv2d:

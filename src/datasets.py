@@ -18,6 +18,9 @@ from tqdm import tqdm
 from hps import Hparams
 from utils import log_standardize, normalize
 
+from sklearn.model_selection import train_test_split
+from torchvision.transforms import Compose, Resize, ToTensor
+
 
 class UKBBDataset(Dataset):
     def __init__(
@@ -569,4 +572,158 @@ def mimic(
             concat_pa=(True if not hasattr(args, "concat_pa") else args.concat_pa),
             transform=augmentation[("eval" if split != "train" else split)],
         )
+    return datasets
+
+
+
+class BRSETDataset(Dataset):
+    def __init__(self, 
+                csv_file: str, 
+                root_dir: str, 
+                transform: Optional[Compose] = None, 
+                columns: Optional[List[str]] = None, 
+                norm: Optional[str] = None,
+                n_classes: int = 5,
+                concat_pa: bool = False
+    ):
+        
+        """
+        Args:
+            csv_file (str): Path to the csv file with annotations.
+            root_dir (str): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied on a sample.
+        """
+        self.n_classes = n_classes
+        self.df = pd.read_csv(csv_file)
+        self.root_dir = root_dir
+        self.transform = transform
+        self.concat_pa = concat_pa
+        if columns is None:
+            self.columns = ['image_id', 'patient_age', 'patient_sex', 'DR_ICDR']
+            self.df = self.df[self.columns]
+        else:
+            self.columns = columns
+            self.df = self.df[columns]
+        
+        if 'DR_ICDR' in self.columns:
+            if self.n_classes == 5:
+                self.df['DR_ICDR'] = self.df['DR_ICDR'].map({0: 0, 1: 1, 2: 2, 3: 3, 4: 4})
+            elif self.n_classes == 2:
+                self.df['DR_ICDR'] = self.df['DR_ICDR'].map({0: 0, 1: 1, 2: 1, 3: 1, 4: 1})
+            elif self.n_classes == 3:
+                self.df['DR_ICDR'] = self.df['DR_ICDR'].map({0: 0, 1: 1, 2: 1, 3: 1, 4: 2})                
+                
+                
+        # Preprocessing
+        self.df = self.df.dropna(subset=['patient_age'])  # Remove missing ages
+        self.df['patient_sex'] = self.df['patient_sex'].map({1: 0, 2: 1})  # Convert sex to binary
+        
+        print(f"columns: {self.columns}")
+        print(f"df: {self.df.head()}")
+        
+        self.samples = {}
+        for i in self.columns:
+            if i == 'DR_ICDR':
+                if self.n_classes != 2:
+                    self.samples[i] = F.one_hot(torch.tensor(self.df[i].values.astype(int)), num_classes=self.n_classes)
+                else:
+                    self.samples[i] = torch.as_tensor(self.df[i]).float()
+            elif i == 'image_id':
+                # Handle 'image_id' column differently
+                self.samples[i] = self.df[i].values
+            else:
+                self.samples[i] = torch.as_tensor(self.df[i].values).float()
+            
+        # Self.columns except image_id
+        for column in ['patient_age']:
+            print(f"{column} normalization: {norm}")
+            if column in self.columns:
+                if norm == "[-1,1]":
+                    self.samples[column] = normalize(self.samples[column])
+                elif norm == "[0,1]":
+                    self.samples[column] = normalize(self.samples[column], zero_one=True)
+                elif norm == "log_standard":
+                    self.samples[column] = log_standardize(self.samples[column])
+                elif norm == None:
+                    pass
+                else:
+                    NotImplementedError(f"{norm} not implemented.")
+                    
+        print(f"# of samples: {len(self.df)}")
+        self.return_x = True if "image_id" in self.columns else False
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx: int) -> Dict[str, Tensor]:
+        sample = {k: v[idx] for k, v in self.samples.items()}
+        
+        if self.return_x:
+            file_path = os.path.join(self.root_dir, 'images/', sample['image_id'] + '.jpg')
+            x = Image.open(file_path)
+            
+            if self.transform is not None:
+                sample["x"] = self.transform(x)
+                sample.pop("image_id", None)
+                
+        if self.concat_pa:
+            # Concatenate all relevant tensors to form 'pa'
+            sample["pa"] = torch.cat(
+                
+                [torch.tensor([sample[k]]) if k != 'DR_ICDR' else sample[k] for k in self.columns if k not in ['image_id']],  # Example excluding 'image_id' and 'DR_ICDR'
+                dim=0
+            )
+        
+        return sample
+    
+def split_data(df, root_dir, test_size=0.2, val_size=0.1):
+    train_val, test = train_test_split(df, test_size=test_size, stratify=df['DR_ICDR'], random_state=42)
+    train, val = train_test_split(train_val, test_size=val_size / (1 - test_size), stratify=train_val['DR_ICDR'], random_state=42)
+
+    train.to_csv(os.path.join(root_dir, 'BRSET_train.csv'), index=False)
+    test.to_csv(os.path.join(root_dir, 'BRSET_test.csv'), index=False)
+    val.to_csv(os.path.join(root_dir, 'BRSET_valid.csv'), index=False)
+
+    return train, val, test
+
+def brset(args: Hparams) -> Dict[str, BRSETDataset]:
+    # Load data
+    if not args.data_dir:
+        args.data_dir = "/home/opc/Retina/BRSET/"
+        
+    csv_file = os.path.join(args.data_dir, 'labels.csv')
+    df = pd.read_csv(csv_file)
+
+    # Split data and save to CSV files
+    train_df, val_df, test_df = split_data(df, args.data_dir)
+    
+    augmentation = {
+        "train": TF.Compose(
+            [
+                TF.Resize((args.input_res, args.input_res)),
+                TF.RandomCrop(
+                    size=(args.input_res, args.input_res),
+                    padding=[2 * args.pad, args.pad],
+                ),
+                TF.RandomHorizontalFlip(p=args.hflip),
+                TF.PILToTensor(),
+            ]
+        ),
+        "eval": TF.Compose(
+            [TF.Resize((args.input_res, args.input_res)), TF.PILToTensor()]
+        ),
+    }
+
+    datasets = {}
+    for split in ["train", "valid", "test"]:
+        datasets[split] = BRSETDataset(
+            root_dir=args.data_dir,
+            csv_file=os.path.join(args.data_dir, f"BRSET_{split}.csv"),
+            transform=augmentation[("eval" if split != "train" else split)],
+            columns=(None if not args.parents_x else ["image_id"] + args.parents_x),
+            norm=(None if not hasattr(args, "context_norm") else args.context_norm),
+            n_classes=args.n_classes,
+            concat_pa=(True if not hasattr(args, "concat_pa") else args.concat_pa),
+        )
+
     return datasets

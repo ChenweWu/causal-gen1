@@ -7,6 +7,9 @@ pyro_ppl==1.8.4
 scikit_learn==1.2.2
 seaborn==0.12.2
 Send2Trash==1.8.2
-torch==2.0.0
-torchvision==0.15.0
+scikit-image==0.20.0
+torch==2.0.1
+torchvision==0.15.2
 tqdm==4.65.0
+tensorboard==2.15.1
+opencv-python==4.9.0.80
