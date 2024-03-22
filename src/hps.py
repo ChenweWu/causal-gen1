@@ -7,6 +7,37 @@ class Hparams:
     def update(self, dict):
         for k, v in dict.items():
             setattr(self, k, v)
+            
+brset = Hparams()
+brset.lr = 1e-3
+brset.bs = 16
+brset.wd = 0.01
+brset.z_dim = 16
+brset.input_res = 384 #192
+brset.pad = 9
+brset.hflip = 0.5
+
+brset.input_channels = 3
+# the first number is never used, it is just a placeholder to know the expected dimension of the output
+# b is the number of convolutional blocks, so for example 32b3d2 means 3 convolutional blocks
+# d is used to create a downsampling layer (represented as projection layer, and a 2D average pooling layer), so 32b3d2 means that we will add a 2D average pooling layer block with a stride and and kernel size of 2, at the end of the 3 convolutional blocks
+# The widths are the number of channels of each convolutional block
+#brset.enc_arch = "384b1d4,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2" # Also for 384 but requires more memory 
+#brset.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,384b2" # Also for 384 but requires more memory
+brset.enc_arch = "384b1d4,96b3d4,24b11d2,12b7d2,6b3d6,1b2" # for 384
+brset.dec_arch = "1b2,6b4,12b8,24b12,96b4,384b2" # for 384
+brset.widths = [32, 64, 128, 160, 192, 512] # for 384
+#brset.enc_arch = "192b1d2,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2" # for 192
+#brset.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2" # for 192
+#brset.widths = [32, 64, 96, 128, 160, 192, 512] # for 192
+brset.bias_max_res = 64 # Used for the max resolution of the bias parameter
+brset.bottleneck = 4 # Used for the number of channels of the bottleneck layer in the block = width/bottleneck
+brset.parents_x = ['patient_age', 'patient_sex', 'DR_ICDR']
+brset.context_norm = "[-1,1]"
+brset.context_dim = 7 # Number of context variables. In our case it is 7 because we have age (1 - Continuous), sex (1 - Binary) and DR_ICDR (5 one-hot encoded)
+brset.n_classes = 5
+brset.concat_pa = True
+HPARAMS_REGISTRY["brset"] = brset
 
 
 morphomnist = Hparams()
@@ -159,6 +190,10 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--eval_freq", help="Train epochs per validation.", type=int, default=5
     )
+    parser.add_argument(
+        "--n_classes", help="Number of classes for DR ICDR.", type=int, default=10
+    )
+    
     # model
     parser.add_argument(
         "--vae",
